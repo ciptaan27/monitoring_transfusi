@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="id" class="box-border">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Monitoring Transfusi Darah — Final v6.1</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        *,
+        *::before,
+        *::after {
+            box-sizing: border-box;
+        }
+
+        input,
+        select,
+        textarea {
+            border: 1px solid #cbd5e1;
+            padding: .35rem .45rem;
+            border-radius: .25rem;
+            width: 100%;
+        }
+
+        .btn {
+            padding: .45rem .6rem;
+            border-radius: .35rem;
+            cursor: pointer;
+        }
+
+        .smallbtn {
+            padding: .25rem .4rem;
+            font-size: 0.75rem;
+        }
+
+        .status-badge {
+            font-size: 0.85rem;
+            padding: .2rem .4rem;
+            border-radius: .25rem;
+            background: #e6ffed;
+            color: #065f46;
+        }
+
+        .log {
+            font-size: 0.72rem;
+            color: #374151;
+            opacity: 0.85;
+            margin-top: 4px;
+        }
+
+        .locked {
+            opacity: .6;
+        }
+
+        @media print {
+
+            #btnTambah,
+            #btnPrint,
+            .btnSaveRow,
+            .btnSaveBlock,
+            .btnRemove,
+            .btnSaveJamMulai,
+            .btnEditJamMulai,
+            .btnSaveMonitoring,
+            .btnCutoff,
+            .btnUnlockRow {
+                display: none !important;
+            }
+
+            input,
+            select,
+            textarea {
+                border: none !important;
+            }
+        }
+    </style>
+</head>
+
+<body class="bg-gray-100 p-6">
+
+    <!-- MAIN WRAPPER -->
+    <div class="max-w-5xl mx-auto bg-white p-6 border shadow">
+
+        <!-- Header -->
+        <div class="flex justify-between items-start mb-4">
+            <div>
+                <img src="https://via.placeholder.com/120x50?text=LOGO" alt="logo" class="mb-2">
+                <p class="text-sm leading-tight">Jl. Jatsari No.3<br>Mekarsari – Jatisari<br>Karawang</p>
+            </div>
+            <div class="text-sm text-right">
+                <p>No Form : CM/13/XI/16</p>
+                <p>No. Rev : 01</p>
+            </div>
+        </div>
+
+        <h1 class="text-center text-lg font-bold mb-4">FORM MONITORING TRANSFUSI DARAH (v6.1)</h1>
+
+        <!-- Identitas -->
+        <div class="grid grid-cols-2 gap-4 text-sm mb-4">
+            <div>Nama: <input id="pasien_nama" type="text"></div>
+            <div>No. RM: <input id="pasien_rm" type="text"></div>
+            <div>Tanggal Lahir: <input id="pasien_tgllhr" type="date"></div>
+            <div>Tanggal Masuk: <input id="pasien_tglmasuk" type="date"></div>
+            <div>Jenis Kelamin:
+                <select id="pasien_jk">
+                    <option value="">-</option>
+                    <option>Laki-laki</option>
+                    <option>Perempuan</option>
+                </select>
+            </div>
+            <div>Ruang / Kelas: <input id="pasien_ruang" type="text"></div>
+        </div>
+
+        <!-- Controls -->
+        <div class="flex items-center gap-3 mb-4">
+            <button id="btnTambah" class="btn bg-green-600 text-white">+ Tambah Transfusi</button>
+            <button id="btnPrint" onclick="window.print()" class="btn bg-blue-600 text-white">Print</button>
+        </div>
+
+        <!-- Container -->
+        <div id="transfusiContainer" class="space-y-6"></div>
+
+    </div>
+
+    <script>
+        /* ==========================
+           CONFIG: USER & ROLE (auto from login)
+           ========================== */
+        const CURRENT_USER = "Perawat_A";      // change to real login username on integration
+        const CURRENT_USER_ROLE = "perawat";   // "perawat" or "admin"
+
+        /* App state */
+        let savedBlocks = [];
+
+        const monitoringLabels = [
+            "Sebelum transfusi",
+            "15 menit pertama",
+            "1 jam pertama",
+            "2 jam pertama",
+            "3 jam pertama",
+            "4 jam pertama",
+            "1 jam setelah transfusi"
+        ];
+
+        function toTimeDate(t) { if (!t) return null; return new Date(`2000-01-01T${t}:00`); }
+        function timeNowStr() { const d = new Date(); return d.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }); }
+        function dateToTimeStr(d) { return d.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }); }
+        function minutesDiff(a, b) { return Math.round((b - a) / 60000); }
+        function tsNow() { const d = new Date(); return d.toLocaleString('id-ID'); }
+
+        /* TEMPLATE BLOCK */
+        function createBlock(no) {
+            return `
+  <div class="border p-4 rounded-lg shadow-sm bg-white" id="blok-${no}">
+    <div class="flex justify-between items-center mb-2">
+      <h3 class="text-sm font-bold">TRANSFUSI #${no}</h3>
+      <div>
+        <div class="status-badge" data-role="statusBadge" style="display:none">Selesai: <span data-role="statusTime"></span></div>
+      </div>
+    </div>
+
+    <!-- PEMERIKSAAN -->
+    <h4 class="font-semibold text-sm mb-2">PEMERIKSAAN DARAH SEBELUM TRANSFUSI</h4>
+    <div class="overflow-x-auto mb-4">
+      <table class="w-full border text-sm">
+        <thead>
+          <tr class="bg-gray-200 text-center">
+            <th class="border p-1 w-8">No</th>
+            <th class="border p-1">Keterangan</th>
+            <th class="border p-1">Isi</th>
+            <th class="border p-1">Instruksi Dokter</th>
+            <th class="border p-1">Kantong</th>
+            <th class="border p-1">Kartu</th>
+            <th class="border p-1">Pasien</th>
+            <th class="border p-1 w-48">Aksi & Log</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${[1, 2, 3, 4, 5].map(n => `
+            <tr data-row="${n}">
+              <td class="border p-1 text-center">${n}</td>
+              <td class="border p-1">${n == 1 ? "Nama Pasien" : n == 2 ? "Jenis Kelamin" : n == 3 ? "Golongan Darah" : n == 4 ? "Komponen Darah" : "Instruksi Dokter"}</td>
+              <td class="border p-1">
+                ${n == 1 ? `<input data-field="nama">` :
+                    n == 2 ? `<select data-field="jk"><option>Laki-laki</option><option>Perempuan</option></select>` :
+                        n == 3 ? `<select data-field="gol"><option>A</option><option>B</option><option>AB</option><option>O</option></select>` :
+                            n == 4 ? `<select data-field="komponen"><option>PRC</option><option>TC</option><option>FFP</option><option>WB</option></select>` :
+                                `<input data-field="isi_instruksi">`
+                }
+              </td>
+              <td class="border p-1"><select data-field="instruksi${n}"><option>S</option><option>TS</option></select></td>
+              <td class="border p-1"><select data-field="kantong${n}"><option>S</option><option>TS</option></select></td>
+              <td class="border p-1"><select data-field="kartu${n}"><option>S</option><option>TS</option></select></td>
+              <td class="border p-1"><select data-field="pasien${n}"><option>S</option><option>TS</option></select></td>
+              <td class="border p-1 text-left">
+                <div class="flex gap-2 items-start">
+                  <div>
+                    <button class="btn btnSaveRow bg-blue-600 text-white smallbtn mb-1" data-v="1">Save 1</button>
+                    <button class="btn btnSaveRow bg-green-600 text-white smallbtn" data-v="2">Save 2</button>
+                  </div>
+                  <div class="ml-2 text-xs text-gray-600 log" data-log-pemeriksaan></div>
+                </div>
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- JAM MULAI & SELESAI -->
+    <div class="grid grid-cols-4 gap-4 text-sm mb-3">
+      <div>Tanggal: <input type="date" data-field="tgl"></div>
+      <div>Jam Mulai: <input type="time" class="jamMulai" data-field="jamMulai"></div>
+      <div class="flex flex-col gap-1 justify-center">
+        <div>
+          <button class="btn btnSaveJamMulai bg-blue-600 text-white smallbtn">Save Jam Mulai</button>
+          <button class="btn btnEditJamMulai bg-gray-500 text-white smallbtn hidden">Edit</button>
+        </div>
+        <div class="text-xs text-gray-600 log" data-log-jammulai></div>
+      </div>
+      <div>Jam Selesai: <input type="time" class="jamSelesai" data-field="jamSelesai"></div>
+    </div>
+
+    <p class="text-sm mb-3">Durasi: <span class="durasi font-bold text-blue-700">-</span></p>
+
+    <!-- MONITORING -->
+    <h4 class="font-semibold text-sm mb-2">MONITORING SELAMA TRANSFUSI</h4>
+    <div class="overflow-x-auto mb-3">
+      <table class="w-full border text-sm">
+        <thead>
+          <tr class="bg-gray-200 text-center">
+            <th class="border p-1 w-8">No</th>
+            <th class="border p-1">Tanda Vital</th>
+            <th class="border p-1 w-28">Jam</th>
+            <th class="border p-1 w-20">TTD</th>
+            <th class="border p-1 w-20">Nadi</th>
+            <th class="border p-1 w-20">Suhu</th>
+            <th class="border p-1 w-20">Napas</th>
+            <th class="border p-1 w-32">Reaksi Transfusi</th>
+            <th class="border p-1 w-40">Aksi & Log</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${monitoringLabels.map((m, i) => `
+            <tr data-monitor="${i}">
+              <td class="border p-1 text-center">${i + 1}</td>
+              <td class="border p-1 text-left">${m}</td>
+              <td class="border p-1"><input type="time" class="jamIndex${i}"></td>
+              <td class="border p-1"><input data-field="ttd${i}"></td>
+              <td class="border p-1"><input data-field="nadi${i}"></td>
+              <td class="border p-1"><input data-field="suhu${i}"></td>
+              <td class="border p-1"><input data-field="napas${i}"></td>
+              <td class="border p-1"><input data-field="reaksi${i}" placeholder="misal: gatal, demam"></td>
+              <td class="border p-1 text-left">
+                <div class="flex gap-2 items-start">
+                  <div>
+                    <button class="btn btnSaveMonitoring bg-indigo-600 text-white smallbtn" data-idx="${i}">Save</button>
+                    <button class="btn btnCutoff bg-red-600 text-white smallbtn ml-1" data-idx="${i}">Cut-off</button>
+                    ${CURRENT_USER_ROLE === 'admin' ? '<button class="btn btnUnlockRow bg-yellow-400 text-black smallbtn ml-1 hidden">Unlock</button>' : ''}
+                  </div>
+                  <div class="ml-2 text-xs text-gray-600 log" data-log-monitor></div>
+                </div>
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- CATATAN -->
+    <p class="font-semibold text-sm mb-2">Catatan:</p>
+    <textarea class="w-full h-24 mb-3" data-field="catatan"></textarea>
+
+    <div class="flex gap-2">
+      <button class="btn btnSaveBlock bg-blue-600 text-white" data-blok="${no}">Save Transfusi #${no}</button>
+      <button class="btn btnRemove bg-red-500 text-white" data-blok="${no}">Hapus</button>
+    </div>
+
+  </div>
+  `;
+        }
+
+        /* ========== ADD BLOCK ========== */
+        document.getElementById('btnTambah').addEventListener('click', () => {
+            const nextNumber = savedBlocks.length + 1;
+            if (document.getElementById('blok-' + nextNumber)) {
+                alert('Transfusi #' + nextNumber + ' masih ada & belum disimpan.');
+                return;
+            }
+            document.getElementById('transfusiContainer').insertAdjacentHTML('beforeend', createBlock(nextNumber));
+            restoreJamMulaiForNewBlock();
+        });
+
+        /* ========== SAVE JAM MULAI (locks date+jam) + log ========== */
+        document.addEventListener('click', function (e) {
+            if (!e.target.matches('.btnSaveJamMulai')) return;
+            const block = e.target.closest('[id^="blok-"]');
+            const no = block.id.split('-')[1];
+            const jamMulaiEl = block.querySelector('.jamMulai');
+            const tanggalEl = block.querySelector('[data-field="tgl"]');
+            const logEl = block.querySelector('[data-log-jammulai]');
+            if (!jamMulaiEl.value) { alert('Isi Jam Mulai terlebih dulu.'); return; }
+
+            jamMulaiEl.disabled = true;
+            tanggalEl.disabled = true;
+
+            block.querySelector('.btnSaveJamMulai').classList.add('hidden');
+            block.querySelector('.btnEditJamMulai').classList.remove('hidden');
+
+            block.dataset.jamMulaiSavedBy = CURRENT_USER;
+            block.dataset.jamMulaiSavedAt = tsNow();
+            logEl.innerHTML = `Saved by <strong>${CURRENT_USER}</strong> at <small>${block.dataset.jamMulaiSavedAt}</small>`;
+
+            localStorage.setItem('jam_mulai_transfusi_' + no, jamMulaiEl.value);
+            localStorage.setItem('jam_mulai_log_' + no, JSON.stringify({ by: CURRENT_USER, at: block.dataset.jamMulaiSavedAt }));
+
+            // auto-fill monitoring times
+            const start = toTimeDate(jamMulaiEl.value);
+            const offsets = [0, 15, 60, 120, 180, 240, 300];
+            offsets.forEach((m, i) => {
+                const el = block.querySelector('.jamIndex' + i);
+                if (el) el.value = dateToTimeStr(new Date(start.getTime() + m * 60000));
+            });
+
+            alert('Jam Mulai disimpan & dikunci.');
+        });
+
+        /* ========== EDIT JAM MULAI (with confirm / admin) ========== */
+        document.addEventListener('click', function (e) {
+            if (!e.target.matches('.btnEditJamMulai')) return;
+            const block = e.target.closest('[id^="blok-"]');
+            if (CURRENT_USER_ROLE !== 'admin' && !confirm('Edit Jam Mulai? Ini akan ubah jadwal monitoring. Lanjut?')) return;
+
+            const no = block.id.split('-')[1];
+            const jamMulaiEl = block.querySelector('.jamMulai');
+            const tanggalEl = block.querySelector('[data-field="tgl"]');
+            const logEl = block.querySelector('[data-log-jammulai]');
+
+            jamMulaiEl.disabled = false;
+            tanggalEl.disabled = false;
+
+            block.querySelector('.btnSaveJamMulai').classList.remove('hidden');
+            block.querySelector('.btnEditJamMulai').classList.add('hidden');
+
+            delete block.dataset.jamMulaiSavedBy;
+            delete block.dataset.jamMulaiSavedAt;
+            logEl.innerHTML = '';
+
+            localStorage.removeItem('jam_mulai_transfusi_' + no);
+            localStorage.removeItem('jam_mulai_log_' + no);
+        });
+
+        /* ========== RESTORE JAM MULAI FOR NEW BLOCK ========== */
+        function restoreJamMulaiForNewBlock() {
+            document.querySelectorAll('[id^="blok-"]').forEach(block => {
+                const no = block.id.split('-')[1];
+                const saved = localStorage.getItem('jam_mulai_transfusi_' + no);
+                const log = localStorage.getItem('jam_mulai_log_' + no);
+                if (!saved) return;
+                const jamMulaiEl = block.querySelector('.jamMulai');
+                const tanggalEl = block.querySelector('[data-field="tgl"]');
+                const logEl = block.querySelector('[data-log-jammulai]');
+
+                jamMulaiEl.value = saved;
+                jamMulaiEl.disabled = true;
+                tanggalEl.disabled = true;
+                block.querySelector('.btnSaveJamMulai').classList.add('hidden');
+                block.querySelector('.btnEditJamMulai').classList.remove('hidden');
+
+                if (log) {
+                    const obj = JSON.parse(log);
+                    block.dataset.jamMulaiSavedBy = obj.by;
+                    block.dataset.jamMulaiSavedAt = obj.at;
+                    logEl.innerHTML = `Saved by <strong>${obj.by}</strong> at <small>${obj.at}</small>`;
+                }
+                const start = toTimeDate(saved);
+                const offsets = [0, 15, 60, 120, 180, 240, 300];
+                offsets.forEach((m, i) => {
+                    const el = block.querySelector('.jamIndex' + i);
+                    if (el) el.value = dateToTimeStr(new Date(start.getTime() + m * 60000));
+                });
+            });
+        }
+
+        /* ========== SAVE PEMERIKSAAN (Save1/Save2) with logs + lock on Save2 ========== */
+        document.addEventListener('click', function (e) {
+            if (!e.target.matches('.btnSaveRow')) return;
+            const btn = e.target;
+            const v = btn.dataset.v;
+            const row = btn.closest('tr[data-row]');
+            const block = btn.closest('[id^="blok-"]');
+            const logDiv = row.querySelector('[data-log-pemeriksaan]');
+
+            // record log
+            row.dataset['savedBy' + v] = CURRENT_USER;
+            row.dataset['savedAt' + v] = tsNow();
+
+            // UI update
+            btn.textContent = `Saved ${v}`;
+            btn.disabled = true;
+            btn.classList.add('opacity-50');
+
+            logDiv.innerHTML = `Saved by <strong>${CURRENT_USER}</strong> at <small>${row.dataset['savedAt' + v]}</small>`;
+
+            if (v === '2') {
+                // lock entire row
+                row.querySelectorAll('input,select').forEach(f => f.disabled = true);
+                row.querySelectorAll('.btnSaveRow').forEach(b => { b.disabled = true; b.classList.add('opacity-50'); });
+                row.classList.add('bg-green-50');
+            } else {
+                if (row.dataset.savedBy1 && row.dataset.savedBy2) {
+                    row.querySelectorAll('input,select').forEach(f => f.disabled = true);
+                    row.classList.add('bg-green-50');
+                }
+            }
+        });
+
+        /* ========== SAVE MONITORING (Save per row only) ========== */
+        document.addEventListener('click', function (e) {
+            if (!e.target.matches('.btnSaveMonitoring')) return;
+            const btn = e.target;
+            const idx = parseInt(btn.dataset.idx, 10);
+            const block = btn.closest('[id^="blok-"]');
+            const row = block.querySelector(`tr[data-monitor="${idx}"]`);
+            const jamRow = row.querySelector(`.jamIndex${idx}`);
+            const logEl = row.querySelector('[data-log-monitor]');
+
+            // mark log and lock only this row
+            row.dataset.savedBy = CURRENT_USER;
+            row.dataset.savedAt = tsNow();
+
+            // disable inputs in this row only
+            row.querySelectorAll('input,select').forEach(inp => inp.disabled = true);
+
+            // disable Save button only for this row
+            btn.disabled = true;
+            btn.classList.add('opacity-50');
+            btn.textContent = 'Saved';
+
+            // log UI
+            logEl.innerHTML = `Saved by <strong>${CURRENT_USER}</strong> at <small>${row.dataset.savedAt}</small>`;
+
+            // show unlock button to admin if present
+            const unlockBtn = row.querySelector('.btnUnlockRow');
+            if (unlockBtn && CURRENT_USER_ROLE === 'admin') unlockBtn.classList.remove('hidden');
+        });
+
+        /* ========== CUT-OFF BUTTON (explicit) ========== */
+        document.addEventListener('click', function (e) {
+            if (!e.target.matches('.btnCutoff')) return;
+            const btn = e.target;
+            const idx = parseInt(btn.dataset.idx, 10);
+            const block = btn.closest('[id^="blok-"]');
+            const row = block.querySelector(`tr[data-monitor="${idx}"]`);
+            const jamRow = row.querySelector(`.jamIndex${idx}`);
+            const jamSelesaiEl = block.querySelector('.jamSelesai');
+            const jamMulaiEl = block.querySelector('.jamMulai');
+
+            if (jamSelesaiEl.value) { alert('Jam selesai sudah terisi: ' + jamSelesaiEl.value); return; }
+
+            const jamVal = jamRow.value;
+            const finalJam = jamVal || timeNowStr();
+            if (!jamVal) jamRow.value = finalJam;
+
+            jamSelesaiEl.value = finalJam;
+
+            if (jamMulaiEl.value) {
+                const dur = minutesDiff(toTimeDate(jamMulaiEl.value), toTimeDate(finalJam));
+                block.querySelector('.durasi').textContent = dur + ' menit';
+            }
+
+            // status badge
+            const badge = block.querySelector('[data-role="statusBadge"]');
+            const statusTime = block.querySelector('[data-role="statusTime"]');
+            badge.style.display = 'inline-block';
+            statusTime.textContent = finalJam;
+
+            // disable subsequent rows (i >= idx)
+            for (let i = idx; i < monitoringLabels.length; i++) {
+                const r = block.querySelector(`tr[data-monitor="${i}"]`);
+                // disable inputs and Save/Cutoff
+                r.querySelectorAll('input,select').forEach(inp => inp.disabled = true);
+                const sb = r.querySelector('.btnSaveMonitoring');
+                if (sb) { sb.disabled = true; sb.classList.add('opacity-50'); sb.textContent = 'Locked'; }
+                const cb = r.querySelector('.btnCutoff');
+                if (cb) { cb.disabled = true; cb.classList.add('opacity-50'); }
+                // log metadata
+                r.dataset.savedBy = CURRENT_USER;
+                r.dataset.savedAt = tsNow();
+                const logEl = r.querySelector('[data-log-monitor]');
+                if (logEl) logEl.innerHTML = `Saved by <strong>${CURRENT_USER}</strong> at <small>${r.dataset.savedAt}</small>`;
+                // show unlock for admin if exists
+                const unlockBtn = r.querySelector('.btnUnlockRow');
+                if (unlockBtn && CURRENT_USER_ROLE === 'admin') unlockBtn.classList.remove('hidden');
+            }
+
+            btn.textContent = 'Cut-off';
+            btn.disabled = true;
+            btn.classList.add('opacity-50');
+        });
+
+        /* ========== UNLOCK ROW (admin only) ========== */
+        document.addEventListener('click', function (e) {
+            if (!e.target.matches('.btnUnlockRow')) return;
+            if (CURRENT_USER_ROLE !== 'admin') { alert('Hanya admin yang boleh unlock.'); return; }
+            const btn = e.target;
+            const row = btn.closest('tr');
+            row.querySelectorAll('input,select').forEach(inp => inp.disabled = false);
+            const saveBtn = row.querySelector('.btnSaveMonitoring');
+            if (saveBtn) { saveBtn.disabled = false; saveBtn.classList.remove('opacity-50'); saveBtn.textContent = 'Save'; }
+            const cutoffBtn = row.querySelector('.btnCutoff');
+            if (cutoffBtn) { cutoffBtn.disabled = false; cutoffBtn.classList.remove('opacity-50'); cutoffBtn.textContent = 'Cut-off'; }
+            delete row.dataset.savedBy;
+            delete row.dataset.savedAt;
+            const logEl = row.querySelector('[data-log-monitor]');
+            if (logEl) logEl.innerHTML = '';
+            btn.classList.add('hidden');
+        });
+
+        /* ========== SAVE BLOK (persist) ========== */
+        document.addEventListener('click', function (e) {
+            if (!e.target.matches('.btnSaveBlock')) return;
+            const btn = e.target;
+            const no = parseInt(btn.dataset.blok, 10);
+            const block = document.getElementById('blok-' + no);
+
+            if (!savedBlocks.includes(no)) savedBlocks.push(no);
+
+            const key = 'transfusi_' + new Date().toISOString();
+            const payload = {
+                savedAt: tsNow(),
+                savedBy: CURRENT_USER,
+                blok: no,
+                pasien: {
+                    nama: document.getElementById('pasien_nama').value || '',
+                    rm: document.getElementById('pasien_rm').value || '',
+                    tgllhr: document.getElementById('pasien_tgllhr').value || '',
+                    tglmasuk: document.getElementById('pasien_tglmasuk').value || '',
+                    jk: document.getElementById('pasien_jk').value || '',
+                    ruang: document.getElementById('pasien_ruang').value || ''
+                },
+                jamMulaiLog: { by: block.dataset.jamMulaiSavedBy || '', at: block.dataset.jamMulaiSavedAt || '' },
+                jamMulai: block.querySelector('.jamMulai').value || '',
+                jamSelesai: block.querySelector('.jamSelesai').value || '',
+                durasi: block.querySelector('.durasi').textContent || '',
+                pemeriksaan: [],
+                monitoring: [],
+                catatan: block.querySelector('[data-field="catatan"]').value || ''
+            };
+
+            block.querySelectorAll('tr[data-row]').forEach(tr => {
+                const r = { row: tr.dataset.row, fields: {}, log: {} };
+                tr.querySelectorAll('[data-field]').forEach(f => r.fields[f.dataset.field] = f.value || '');
+                if (tr.dataset.savedBy1) r.log.save1 = { by: tr.dataset.savedBy1, at: tr.dataset.savedAt1 || '' };
+                if (tr.dataset.savedBy2) r.log.save2 = { by: tr.dataset.savedBy2, at: tr.dataset.savedAt2 || '' };
+                payload.pemeriksaan.push(r);
+            });
+
+            block.querySelectorAll('tr[data-monitor]').forEach(tr => {
+                const i = tr.dataset.monitor;
+                const rowObj = {
+                    index: i,
+                    label: monitoringLabels[i],
+                    jam: block.querySelector('.jamIndex' + i)?.value || '',
+                    ttd: tr.querySelector(`[data-field="ttd${i}"]`)?.value || '',
+                    nadi: tr.querySelector(`[data-field="nadi${i}"]`)?.value || '',
+                    suhu: tr.querySelector(`[data-field="suhu${i}"]`)?.value || '',
+                    napas: tr.querySelector(`[data-field="napas${i}"]`)?.value || '',
+                    reaksi: tr.querySelector(`[data-field="reaksi${i}"]`)?.value || '',
+                    log: { by: tr.dataset.savedBy || '', at: tr.dataset.savedAt || '' }
+                };
+                payload.monitoring.push(rowObj);
+            });
+
+            localStorage.setItem(key, JSON.stringify(payload));
+            localStorage.setItem('last_transfusi_saved', key);
+            alert('Transfusi #' + no + ' disimpan (key: ' + key + ').');
+
+            btn.textContent = 'Saved';
+            btn.disabled = true;
+            btn.classList.add('opacity-50');
+        });
+
+        /* ========== REMOVE BLOCK ========== */
+        document.addEventListener('click', function (e) {
+            if (!e.target.matches('.btnRemove')) return;
+            const no = e.target.dataset.blok;
+            localStorage.removeItem('jam_mulai_transfusi_' + no);
+            localStorage.removeItem('jam_mulai_log_' + no);
+            document.getElementById('blok-' + no)?.remove();
+        });
+
+        /* ========== RESTORE ALL (for blocks that exist) ========== */
+        function restoreAll() {
+            document.querySelectorAll('[id^="blok-"]').forEach(block => {
+                const no = block.id.split('-')[1];
+                const jamSaved = localStorage.getItem('jam_mulai_transfusi_' + no);
+                const jamLog = localStorage.getItem('jam_mulai_log_' + no);
+                if (!jamSaved) return;
+                block.querySelector('.jamMulai').value = jamSaved;
+                block.querySelector('.jamMulai').disabled = true;
+                block.querySelector('[data-field="tgl"]').disabled = true;
+                block.querySelector('.btnSaveJamMulai').classList.add('hidden');
+                block.querySelector('.btnEditJamMulai').classList.remove('hidden');
+                if (jamLog) {
+                    const obj = JSON.parse(jamLog);
+                    block.dataset.jamMulaiSavedBy = obj.by;
+                    block.dataset.jamMulaiSavedAt = obj.at;
+                    const logEl = block.querySelector('[data-log-jammulai]');
+                    if (logEl) logEl.innerHTML = `Saved by <strong>${obj.by}</strong> at <small>${obj.at}</small>`;
+                }
+                const start = toTimeDate(jamSaved);
+                const offsets = [0, 15, 60, 120, 180, 240, 300];
+                offsets.forEach((m, i) => {
+                    const el = block.querySelector('.jamIndex' + i);
+                    if (el) el.value = dateToTimeStr(new Date(start.getTime() + m * 60000));
+                });
+            });
+        }
+
+        /* INIT: add first block */
+        document.getElementById('btnTambah').click();
+        restoreAll();
+
+    </script>
+
+</body>
+
+</html>
